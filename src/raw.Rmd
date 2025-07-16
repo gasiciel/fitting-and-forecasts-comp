@@ -1,8 +1,6 @@
 ---
-title: "Raport 4"
-subtitle: "Analiza szeregów czasowych"
-author: "Maciej Olenkiewicz 275922 Stanisław Olek 275946"
-date: "`r Sys.Date()`"
+title: "Dopasowanie modelu ARIMA i porównanie dokładności prognoz"
+author: "Stanisław Olek"
 header-includes:
    - \usepackage[OT4]{polski}
    - \usepackage[utf8]{inputenc}
