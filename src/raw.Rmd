@@ -1,0 +1,806 @@
+---
+title: "Raport 4"
+subtitle: "Analiza szeregów czasowych"
+author: "Maciej Olenkiewicz 275922 Stanisław Olek 275946"
+date: "`r Sys.Date()`"
+header-includes:
+   - \usepackage[OT4]{polski}
+   - \usepackage[utf8]{inputenc}
+   - \usepackage{graphicx}
+   - \usepackage{float}
+   - \usepackage{verbdef}
+   - \usepackage{array}
+   - \verbdef{\gnp}{gnp}
+   - \newtheorem{uw}{Uwaga!}
+   - \newtheorem{wn}{Wniosek:}
+   - \usepackage{booktabs}
+   - \usepackage{placeins}
+   - \usepackage{subcaption}
+output: 
+  pdf_document:
+    toc: true
+    fig_caption: yes
+    fig_width: 4
+    fig_height: 3
+    number_sections: true
+fontsize: 10pt 
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = FALSE,
+	fig.align = "center",
+	fig.pos = "H",
+	message = FALSE,
+	warning = FALSE,
+	out.extra = ""
+)
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, echo = FALSE) 
+knitr::opts_chunk$set(fig.pos = "H", out.extra = "", fig.align = "center")
+library(showtext)
+library(xtable)
+showtext_auto()
+```
+
+
+# Dopasowanie modelu ARIMA do szeregu \gnp
+W tym rozdziale spróbujemy dopasować do danych \verb+gnp+ z biblioteki \verb+astsa+ odpowiedni model ARIMA, aby jak najlepiej przewidzieć zachowanie szeregu w czasie. Dane te dotyczą dochodu narodowego USA od 1. kwartału 1947 roku do 3. kwartału roku 2002. Najpierw spróbujemy zidentyfikować niezbędne transformacje na tym szeregu, aby przekształcić go do szeregu stacjonarnego.\newline
+Przed zastosowaniem niezbędnych transformacji podzielimy zbiór na uczący i testowy. Uczący zbiór zawiera dane do 4. kwartału 1999 roku, a testowy - pozostałe do 3. kwartału 2002 roku. Zobaczmy, jak prezentuje się szereg dla danych treningowych.
+\begin{figure}[H]
+```{r,echo=FALSE}
+library(forecast)
+library(ggplot2)  
+library(astsa)
+library(xtable)
+data(gnp)
+gnp.train <- window(gnp, end = c(1999,4))
+gnp.test <- window(gnp, start = c(2000,1))
+
+autoplot(gnp.train)
+#trend kwadratowy?
+#ndiffs(gnp.train)
+#2
+#nsdiffs(gnp.train)
+#0
+#BoxCox.lambda(gnp.train,method = 'loglik')
+#0.25
+gnp.train.BC <- BoxCox(gnp.train, lambda = 0.25)
+#ndiffs(gnp.train.BC)
+#1
+#model z podwójnym różnicowaniem:
+gnp.train.diff.1 <- diff(gnp.train)
+gnp.train.diff.2 <- diff(gnp.train.diff.1)
+#mean(gnp.train.diff.2) #różne od 0
+#model z BC i różnicowaniem:
+gnp.train.BC.diff <- diff(gnp.train.BC)
+#mean(gnp.train.BC.diff) #różne od 0
+```
+\caption{Wykres danych \gnp}
+\label{plot1}
+\end{figure}
+Na rysunku \ref{plot1} widzimy występujący w danych trend, który przypomina trend kwadratowy. Nie widzimy natomiast sezonowości w danych. Stąd możemy przeprowadzić podwójne różnicowanie z opóźnieniem 1, aby ten trend usunąć. To samo mówi nam funkcja \verb+ndiffs+, wg której powinniśmy zastosować 2 różnicowania z opóźnieniem 1, natomiast zgodnie z naszymi przewidywaniami i z funkcją \verb+nsdiffs+ nie powinniśmy stosować różnicowania z opóźnieniem sezonowym. Sprawdzimy jeszcze drugie podejście - zastosowanie transformacji Boxa-Coxa (B-C), a następnie zróżnicowanie z opóźnieniem 1 (zasugerowane przez funkcję \verb+ndiffs+). Jako parametr $\lambda$ przy transformacji B-C przyjmiemy $\lambda$ zaproponowane przez funkcję \verb+BoxCox.lambda+ metodą największej wiarogodności. Zgodnie z nią $\lambda$ wynosi 0.25. Ponadto, dla modeli z transformacją B-C oraz różnicowaniem dodamy dryf, ponieważ średnia tego szeregu po transformacji B-C i zróżnicowaniu jest różna od 0 (dokładniej wynosi 0.067).
+\par Najpierw sprawdzimy, jakie $p$ i $q$ dobrać do modeli AR i MA dla obu zastosowanych przekształceń. Za pomocą rysunku \ref{plot2} zidentyfikujemy modele dla danych po podwójnym zróżnicowaniu.
+\begin{figure}
+```{r,echo=FALSE}
+ggtsdisplay(gnp.train.diff.2, lag.max = floor(length(gnp.train)/4))
+```
+\caption{Wykres danych oraz ACF i PACF danych po podwójnym zróżnicowaniu}
+\label{plot2}
+\end{figure}
+Szereg możemy nazwać stacjonarnym, gdyż nie widzimy w nim pozostałości po trendzie, a ACF nie zanika ani nie jest okresowa. Na podstawie ACF możemy rozważyć modele MA(30) oraz MA(42) (ostatni raz ACF odstaje poza przedziały ufności dla $h=42$, jednak jest to mało wyraźne w porównaniu z $h=30$). Na podstawie PACF możemy rozważyć modele AR(15) oraz AR(29) (ostatni raz PACF odstaje poza przedziały ufności dla $h=29$, jednak jest to mało wyraźne w porównaniu z $h=15$).
+Kolejnym krokiem będzie zidentyfikowanie modeli dla szeregu po transformacji B-C oraz różnicowaniu.
+\begin{figure}
+```{r,echo=FALSE}
+ggtsdisplay(gnp.train.BC.diff, lag.max = floor(length(gnp.train)/4))
+```
+\caption{Wykres danych oraz ACF i PACF danych po transformacji B-C i zróżnicowaniu}
+\label{plot3}
+\end{figure}
+Szereg na rysunku \ref{plot3} możemy nazwać stacjonarnym, gdyż nie widzimy w nim pozostałości po trendzie, a ACF nie zanika ani nie jest okresowa. Na podstawie funkcji ACF możemy rozważyć modele MA(2) oraz MA(30) (dla $h=30$ ACF odstaje po raz ostatni poza przedziały ufności, natomiast naprawdę wyraźne odstawanie widzimy ostatni raz dla $h=2$). Na podstawie funkcji PACF możemy rozważyć model AR(30) (nie rozważamy dodatkowych modeli, gdyż dla $h=30$ odstawanie poza przedziały ufności jest wyraźne).
+\par Musimy dopasować modele także na podstawie kryteriów informacyjnych AIC, AICC oraz BIC. Zrobimy to dla szeregu bez i z transformacją B-C za pomocą funkcji \verb+auto.arima+.
+```{r,echo=FALSE}
+arima.aic.BC <- auto.arima(gnp.train, ic='aic', lambda = 0.25)
+#ARIMA(1,1,0)(0,0,0)_4 - dla BIC i AICC podobnie
+arima.aic <- auto.arima(gnp.train, ic='aic')
+#ARIMA(0,2,3)(0,0,0)_4
+arima.bic <- auto.arima(gnp.train, ic='bic')
+#ARIMA(1,2,1)(0,0,0)_4
+```
+Zgodnie ze wszystkimi kryteriami informacyjnymi dla szeregu z transformacją B-C wybieramy model ARIMA$(1,1,0)(0,0,0)_4$, natomiast na podstawie kryteriów AIC i AICC dla szeregu bez transformacji B-C wybieramy model ARIMA$(0,2,3)(0,0,0)_4$, a zgodnie z kryterium BIC dla tego szeregu wybieramy model ARIMA$(1,2,1)(0,0,0)_4$.
+\par W związku z tym rozważanymi modelami będą: ARIMA(0, 2, 30), ARIMA(0, 2, 42), ARIMA(15, 2, 0), ARIMA(29, 2, 0), ARIMA(0, 1, 2) z transformacją B-C, ARIMA(0, 1, 30) z transformacją B-C, ARIMA(30, 1, 0) z transformacją B-C (dla tych modeli nie uwzględniamy czynnika sezonowego - stąd skrócony zapis), ARIMA$(1,1,0)(0,0,0)_4$, ARIMA$(0,2,3)(0,0,0)_4$, ARIMA$(1,2,1)(0,0,0)_4$.
+\par Należy sprawdzić, czy modele te mają losowe reszty - inaczej będziemy sprawdzać, czy reszty w tych modelach są białym szumem. Dodatkowo, sprawdzimy, w których modelach reszty pochodzą z rozkładu nromalnego. Losowość reszt sprawdzimy za pomocą testu Ljungi-Boxa (L-B) z funkcji \verb+checkresiduals+, a normalność reszt za pomocą testu Shapiro-Wilka (S-W) z funkcji \verb+shapiro.test+. Przyjmujemy poziom istotności $\alpha=0.05$.
+\begin{figure}[H]
+```{r,echo=FALSE,results='hide'}
+model.ma30 <- Arima(gnp.train, 
+                    order = c(0,2,30),
+                    include.drift = T)
+checkresiduals(model.ma30)
+# shapiro.test(model.ma30$residuals)
+# model.ma30$aicc
+# model.ma30$sigma2
+```
+\caption{Analiza reszt modelu ARIMA(0,2,30)}
+\label{plot4}
+\end{figure}
+W przypadku modelu ARIMA(0, 2, 30) reszty są losowe i normalne, co pokazuje wykres ACF i histogram na rysunku \ref{plot4} oraz co potwierdzają testy L-B i S-W.
+\begin{figure}[H]
+```{r,echo=FALSE,results='hide'}
+# model.ma42 <-Arima(gnp.train, 
+#                    order = c(0,2,42),
+#                    include.drift = T)
+# checkresiduals(model.ma42) #nie ma losowych reszt
+# shapiro.test(model.ma42$residuals)
+# model.ma42$aicc
+# model.ma42$sigma2
+
+model.ar15 <- Arima(gnp.train,
+                   order = c(15,2,0),
+                   include.drift = T)
+checkresiduals(model.ar15)
+# shapiro.test(model.ar15$residuals)
+# model.ar15$aicc
+# model.ar15$sigma2
+```
+\caption{Analiza reszt modelu ARIMA(15, 2, 0)}
+\label{plot5}
+\end{figure}
+W przypadku modelu ARIMA(15, 2, 0) reszty są losowe i normalne, co pokazuje wykres ACF i histogram na rysunku \ref{plot5} oraz co potwierdzają testy L-B i S-W.
+\begin{figure}[H]
+```{r,echo=FALSE,results='hide'}
+model.ar29 <- Arima(gnp.train,
+                    order = c(29,2,0),
+                    include.drift = T)
+checkresiduals(model.ar29, lag = floor(length(gnp.train)/4))
+# shapiro.test(model.ar29$residuals)
+# model.ar29$aicc
+# model.ar29$sigma2
+
+#na podstawie AICC i BIC najlepszy jest model.ar15
+#na podstawie wariancji uwzględnimy model.ma30
+```
+\caption{Analiza reszt modelu ARIMA(29, 2, 0)}
+\label{plot6}
+\end{figure}
+W przypadku modelu ARIMA(29, 2, 0) reszty są losowe i normalne, co pokazuje wykres ACF i histogram na rysunku \ref{plot6} oraz co potwierdzają testy L-B i S-W.
+\begin{figure}[H]
+```{r,echo=FALSE,results='hide'}
+model.ma2.bc <- Arima(gnp.train,
+                      order = c(0,1,2),
+                      include.drift = T,
+                      lambda = 0.25)
+checkresiduals(model.ma2.bc, lag = floor(length(gnp.train)/4))
+# shapiro.test(model.ma2.bc$residuals) #nie jest normalny
+# model.ma2.bc$bic
+# model.ma2.bc$sigma2
+```
+\caption{Analiza reszt modelu ARIMA(0, 1, 2)}
+\label{plot7}
+\end{figure}
+W przypadku modelu ARIMA(0, 1, 2) z transformacją B-C reszty są losowe, ale nie są normalne, co pokazuje wykres ACF i histogram na rysunku \ref{plot7} oraz co potwierdzają testy L-B i S-W.
+\begin{figure}[H]
+```{r,echo=FALSE,results='hide'}
+model.ma30.bc <- Arima(gnp.train,
+                      order = c(0,1,30),
+                      include.drift = T,
+                      lambda = 0.25)
+checkresiduals(model.ma30.bc, lag = floor(length(gnp.train)/4))
+# shapiro.test(model.ma30.bc$residuals) #nie jest normalny
+# model.ma30.bc$bic
+# model.ma30.bc$sigma2
+```
+\caption{Analiza reszt modelu ARIMA(0, 1, 30)}
+\label{plot8}
+\end{figure}
+W przypadku modelu ARIMA(0, 1, 30) z transformacją B-C reszty są losowe, ale nie są normalne, co pokazuje wykres ACF i histogram na rysunku \ref{plot8} oraz co potwierdzają testy L-B i S-W.
+\begin{figure}[H]
+```{r,echo=FALSE,results='hide'}
+model.ar12.bc <- Arima(gnp.train,
+                      order = c(12,1,0),
+                      include.drift = T,
+                      lambda = 0.25)
+checkresiduals(model.ar12.bc, lag = floor(length(gnp.train)/4))
+# shapiro.test(model.ar12.bc$residuals)#nie jest normalny
+# model.ar12.bc$bic
+# model.ar12.bc$sigma2
+```
+\caption{Analiza reszt modelu ARIMA(12, 1, 0)}
+\label{plot9}
+\end{figure}
+W przypadku modelu ARIMA(12, 1, 0) z transformacją B-C reszty są losowe, ale nie są normalne, co pokazuje wykres ACF i histogram na rysunku \ref{plot9} oraz co potwierdzają testy L-B i S-W.
+\begin{figure}[H]
+```{r,echo=FALSE,results='hide'}
+model.ar30.bc <- Arima(gnp.train,
+                      order = c(30,1,0),
+                      include.drift = T,
+                      lambda = 0.25)
+checkresiduals(model.ar30.bc, lag = floor(length(gnp.train)/4))
+# shapiro.test(model.ar30.bc$residuals) #nie jest normalny
+# model.ar30.bc$bic
+# model.ar30.bc$sigma2
+
+#uwzględnimy model.ma2.bc (kryteria) i model.ma30.bc (najniższa wariancja)
+```
+\caption{Analiza reszt modelu ARIMA(30, 1, 0)}
+\label{plot10}
+\end{figure}
+W przypadku modelu ARIMA(30, 1, 0) z transformacją B-C reszty są losowe, ale nie są normalne, co pokazuje wykres ACF i histogram na rysunku \ref{plot10} oraz co potwierdzają testy L-B i S-W.
+\begin{figure}[H]
+```{r,echo=FALSE,results='hide'}
+model.aic.bc <- Arima(gnp.train,
+                      order = c(1,1,0),
+                      seasonal = list(order = c(0,0,0), period = 4),
+                      include.drift = T,
+                      lambda = 0.25)
+checkresiduals(model.aic.bc)
+# shapiro.test(model.aic.bc$residuals) #nie jest normalny
+# model.aic.bc$sigma2
+```
+\caption{Analiza reszt modelu ARIMA$(1,1,0)(0,0,0)_4$}
+\label{plot11}
+\end{figure}
+W przypadku modelu ARIMA$(1,1,0)(0,0,0)_4$ z transformacją B-C reszty są losowe, ale nie są normalne, co pokazuje wykres ACF i histogram na rysunku \ref{plot11} oraz co potwierdzają testy L-B i S-W.
+\begin{figure}[H]
+```{r,echo=FALSE,results='hide'}
+model.aic <- Arima(gnp.train,
+                      order = c(0,2,3),
+                      seasonal = list(order = c(0,0,0), period = 4))
+checkresiduals(model.aic)
+# shapiro.test(model.aic$residuals) #nie jest normalny
+# model.aic$sigma2
+```
+\caption{Analiza reszt modelu ARIMA$(0,2,3)(0,0,0)_4$}
+\label{plot12}
+\end{figure}
+W przypadku modelu ARIMA$(0,2,3)(0,0,0)_4$ reszty są losowe, ale nie są normalne, co pokazuje wykres ACF i histogram na rysunku \ref{plot12} oraz co potwierdzają testy L-B i S-W.
+\begin{figure}[H]
+```{r,echo=FALSE,results='hide'}
+model.bic <- Arima(gnp.train,
+                   order = c(1,2,1),
+                   seasonal = list(order = c(0,0,0), period = 4))
+checkresiduals(model.bic)
+# shapiro.test(model.bic$residuals)
+# model.bic$sigma2
+```
+\caption{Analiza reszt modelu ARIMA$(1,2,1)(0,0,0)_4$}
+\label{plot13}
+\end{figure}
+W przypadku modelu ARIMA$(1,2,1)(0,0,0)_4$ reszty są losowe, ale nie są normalne, co pokazuje wykres ACF i histogram na rysunku \ref{plot13} oraz co potwierdzają testy L-B i S-W.
+\begin{uw}{Model ARIMA(0, 2, 42) nie przeszedł testu białoszumowości reszt, dlatego nie uwzględniliśmy go tutaj i nie będziemy go już wcale uwzględniać.}\end{uw}
+\begin{uw}{W dalszej analizie nie będziemy też uwzględniać modeli AR i MA uzyskanych przez podwójne różnicowanie, ponieważ dają o wiele gorsze prognozy niż modele po transformacji B-C i zróżnicowaniu.}\end{uw}
+```{r,echo=FALSE}
+h <- length(gnp.test)
+# prognoza.ar15 <- forecast::forecast(model.ar15, h=h)
+# prognoza.ma30 <- forecast::forecast(model.ma30, h=h)
+# prognoza.ma42 <- forecast::forecast(model.ma42, h=h)
+# p1 <- autoplot(gnp.train) + autolayer(prognoza.ar15) + autolayer(gnp.test)
+# p2 <- autoplot(gnp.train) + autolayer(prognoza.ma30) + autolayer(gnp.test)
+# p3 <- autoplot(gnp.train) + autolayer(prognoza.ma42) + autolayer(gnp.test)
+# p1
+# p2
+# p3
+```
+\par Możemy zbadać jakość dopasowania modeli w oparciu o kryteria informacyjne. Musimy jednak pamiętać, że modele, w których nie uwzględniliśmy transformacji B-C będą miały inne wartości kryteriów niż modele, w których uwzględniliśmy tą transformację. W tabeli \ref{tab1} zostały przedstawione wartości poszczególnych kryteriów informacyjnych dla analizowanych modeli.
+```{r,echo=FALSE, results='asis', message=FALSE}
+clean_text <- function(x) {
+  x <- gsub("[[:cntrl:]]", "", x)  # usuwa znaki kontrolne typu U+000B
+  return(x)
+}
+
+AIC <- c(model.ma2.bc$aic, model.ma30.bc$aic, model.ar12.bc$aic, model.ar30.bc$aic, model.aic.bc$aic, model.aic$aic, model.bic$aic)
+AICC <- c(model.ma2.bc$aicc, model.ma30.bc$aicc, model.ar12.bc$aicc, model.ar30.bc$aicc, model.aic.bc$aicc, model.aic$aicc, model.bic$aicc)
+BIC <- c(model.ma2.bc$bic, model.ma30.bc$bic, model.ar12.bc$bic, model.ar30.bc$bic, model.aic.bc$bic, model.aic$bic, model.bic$bic)
+Modele <- c('ARIMA(0,1,2) z transf. B-C', 'ARIMA(0,1,30) z transf. B-C', 'ARIMA(12,1,0) z transf. B-C', 'ARIMA(30,1,0) z transf. B-C', 'ARIMA$(1,1,0)(0,0,0)_4$ z transf. B-C', 'ARIMA$(0,2,3)(0,0,0)_4$ bez transf. B-C', 'ARIMA$(1,2,1)(0,0,0)_4$ bez transf. B-C')
+Modele <- clean_text(Modele)
+df <- data.frame(Modele = Modele,
+                 AIC=AIC,
+                 AICC=AICC,
+                 BIC=BIC)
+print(xtable(df, caption = 'Tabela porównująca wartości kryteriów informacyjnych modeli', label = 'tab1', row.names = F), type='latex', table.placement = 'H',sanitize.text.function = identity, include.rownames = FALSE,comment = F)
+```
+Co ciekawe, model wybrany za pomocą kryteriów AIC i AICC bez transformacji B-C ma wyższe wartości tych kryteriów niż model dopasowany za pomocą BIC bez transformacji B-C. Wynika to z tego, że funkcja \verb+auto.arima+ ma domyślnie ustawiony argument \verb+stepwise=TRUE+, przez co pomija przy wyborze niektóre modele ARIMA, które mogą mieć niższe wartości AIC lub AICC. W tym przypadku tak jest, więc model ARIMA$(0,2,3)(0,0,0)_4$ bez transformacji B-C pominiemy z dalszych rozważań. Tak samo pominiemy model ARIMA(30, 1, 0) z transformacją B-C, ponieważ ma on najwyższe wartości wszystkich kryteriów informacyjnych spośród wszystkich modeli, u których została zastosowana transformacja B-C.
+\par Po porównaniu kryteriów informacyjnych zobaczymy, które współczynniki w pozostałych modelach są istotne. Po sprawdzeniu istotności współczynników możemy sprawdzić, czy po usunięciu nieistotnych współczynników reszty dalej są losowe i mają/nie mają rozkładu normalnego oraz czy wartości kryteriów informacyjnych nie zmieniły się istotnie.
+```{r,echo=FALSE}
+model.ma2.bc.coef.importance <- lmtest::coeftest(model.ma2.bc)
+model.ma30.bc.coef.importance <- lmtest::coeftest(model.ma30.bc)
+model.ar12.bc.coef.importance <- lmtest::coeftest(model.ar12.bc)
+model.aic.bc.coef.importance <- lmtest::coeftest(model.aic.bc)
+model.bic.coef.importance <- lmtest::coeftest(model.bic)
+
+
+model.ma2.bc.ind <- which(model.ma2.bc.coef.importance[,"Pr(>|z|)"] <= 0.05)
+model.ma30.bc.ind <- which(model.ma30.bc.coef.importance[,"Pr(>|z|)"] <= 0.05)
+model.ar12.bc.ind <- which(model.ar12.bc.coef.importance[,"Pr(>|z|)"] <= 0.05)
+model.aic.bc.ind <- which(model.aic.bc.coef.importance[,"Pr(>|z|)"] <= 0.05)
+model.bic.ind <- which(model.bic.coef.importance[,"Pr(>|z|)"] <= 0.05)
+
+
+
+model.ma2.bc.vec <- numeric(length(model.ma2.bc$coef))
+model.ma2.bc.vec[model.ma2.bc.ind] <- NA
+model.ma2.bc.istotne <- Arima(gnp.train,
+                              order = c(0,1,2),
+                              include.drift = T,
+                              lambda = 0.25,
+                              fixed = model.ma2.bc.vec)
+
+model.ma30.bc.vec <- numeric(length(model.ma30.bc$coef))
+model.ma30.bc.vec[model.ma30.bc.ind] <- NA
+model.ma30.bc.istotne <- Arima(gnp.train,
+                              order = c(0,1,30),
+                              include.drift = T,
+                              lambda = 0.25,
+                              fixed = model.ma30.bc.vec)
+
+model.ar12.bc.vec <- numeric(length(model.ar12.bc$coef))
+model.ar12.bc.vec[model.ar12.bc.ind] <- NA
+model.ar12.bc.istotne <- Arima(gnp.train,
+                               order = c(12,1,0),
+                               include.drift = T,
+                               lambda = 0.25,
+                               fixed = model.ar12.bc.vec)
+
+model.aic.bc.vec <- numeric(length(model.aic.bc$coef))
+model.aic.bc.vec[model.aic.bc.ind] <- NA
+model.aic.bc.istotne <- Arima(gnp.train,
+                      order = c(1,1,0),
+                      seasonal = list(order = c(0,0,0), period = 4),
+                      include.drift = T,
+                      lambda = 0.25,
+                      fixed = model.aic.bc.vec)
+
+
+
+model.bic.vec <- numeric(length(model.bic$coef))
+model.bic.vec[model.bic.ind] <- NA
+model.bic.istotne <- Arima(gnp.train,
+                   order = c(1,2,1),
+                   seasonal = list(order = c(0,0,0), period = 4),
+                   fixed = model.bic.vec)
+```
+\begin{itemize}
+\item Istotne współczynniki w modelu ARIMA(0, 1, 2) z transf. B-C: `r model.ma2.bc.ind` (dryf też jest istotny). Nie usunęliśmy żadnego współczynnika z modelu, więc jest to dalej ten sam model. 
+\item Istotne współczynniki w modelu ARIMA(0, 1, 30) z transf. B-C: `r model.ma30.bc.ind` (dryf też jest istotny). Reszty w tym modelu nie są już losowe i dalej nie mają rozkładu normalnego. Wartośći kryteriów AIC, AICC i BIC wynoszą odpowiednio `r c(model.ma30.bc.istotne$aic,model.ma30.bc.istotne$aicc,model.ma30.bc.istotne$bic)`, a więc mniej niż w oryginalnym modelu.
+\item Istotne współczynniki w modelu ARIMA(12, 1, 0) z transf. B-C: `r model.ar12.bc.ind` (dryf też jest istotny). Reszty w tym modelu nie są już losowe i dalej nie mają rozkładu normalnego. Wartośći kryteriów AIC, AICC i BIC wynoszą odpowiednio `r c(model.ar12.bc.istotne$aic,model.ar12.bc.istotne$aicc,model.ar12.bc.istotne$bic)`, a więc mniej niż w oryginalnym modelu.
+\item  Istotne współczynniki w modelu ARIMA$(1,1,0)(0,0,0)_4$ z transf. B-C: `r model.aic.bc.ind` (dryf też jest istotny). Nie usunęliśmy żadnego współczynnika z modelu, więc jest to dalej ten sam model.
+\item Istotne współczynniki w modelu ARIMA$(1,2,1)(0,0,0)_4$ z transf. B-C: `r model.bic.ind`. Nie usunęliśmy żadnego współczynnika z modelu, więc jest to dalej ten sam model.
+\end{itemize}
+```{r echo=FALSE}
+# checkresiduals(model.ma2.bc.istotne)
+# checkresiduals(model.ma30.bc.istotne)
+# checkresiduals(model.ar12.bc.istotne)
+# checkresiduals(model.aic.bc.istotne)
+# checkresiduals(model.bic.istotne)
+# 
+# shapiro.test(model.ma2.bc.istotne$residuals)
+# shapiro.test(model.ma30.bc.istotne$residuals)
+# shapiro.test(model.ar12.bc.istotne$residuals)
+# shapiro.test(model.aic.bc.istotne$residuals)
+# shapiro.test(model.bic.istotne$residuals)
+```
+Widzimy, że modele z małą ilością współczynników pozostały bez zmian, natomiast te, które miały więcej współczynników nie przeszły testów losowości, przez co nie będziemy ich uwzględniać w dalszej analizie.
+\par Pozostały modele ARIMA(0, 1, 2), ARIMA$(1, 1, 0)(0,0,0)_4$ oraz ARIMA$(1,2,1)(0,0,0)_4$. Możemy stwierdzić, że model ARIMA$(1, 1, 0)(0,0,0)_4$ jest lepszy niż ARIMA(0, 1, 2), gdyż ma mniejsze wartości kryteriów informacyjnych oraz ma mniej współczynników. Ciężko natomiast porównać model ARIMA$(1,2,1)(0,0,0)_4$ z pozostałymi modelami, gdyż w tym modelu nie zastosowaliśmy transformacji B-C, przez co skala kryteriów informacyjnych oraz np. wariancji jest zupełnie inna. Czymś, co odróżnia ten model od pozostałych jest normalność reszt. Pod tym względem może być lepszy od dwóch pozostałych modeli. Aby to rozstrzygnąć, sprawdzimy prognozy na zbiorze testowym oraz błędy predykcji.
+\par Na rysunku \ref{plot14} pokazana jest prognoza na zbiorze testowym modelu ARIMA(0, 1, 2) z zaznaczonymi realizacjami przedziałów ufności na poziomie ufności 0.95.
+\begin{figure}[H]
+```{r echo=FALSE,fig.width=5.5,fig.height=4}
+prognoza.ma2.bc <- forecast::forecast(model.ma2.bc, h=h, level = 95)
+p1 <- autoplot(gnp.train) + autolayer(prognoza.ma2.bc) + autolayer(gnp.test)
+p1
+```
+\caption{Prognoza modelu ARIMA(0, 1, 2) vs faktyczne dane}
+\label{plot14}
+\end{figure}
+Widzimy, że model nie do końca dobrze przewidział zachowanie danych w późniejszym okresie. Predykcja modelu odbiega od danych, ale całe dane znajdują się w przedziałach ufności. Sprawdźmy, jak prezentuje się prognoza drugiego modelu uwzględniającego transformację B-C.
+\begin{figure}[H]
+```{r echo=FALSE,fig.width=5.5,fig.height=4}
+prognoza.ar1.bc <- forecast::forecast(model.aic.bc, h=h, level = 95)
+p2 <- autoplot(gnp.train) + autolayer(prognoza.ar1.bc) + autolayer(gnp.test)
+p2
+```
+\caption{Prognoza modelu ARIMA$(1, 1, 0)(0,0,0)_4$ vs faktyczne dane}
+\label{plot15}
+\end{figure}
+Na rysunku \ref{plot15} widzimy bardzo podobną predykcję modelu ARIMA$(1, 1, 0)(0,0,0)_4$ do predykcji modelu ARIMA(0, 1, 2). Modelowi ARIMA$(1, 1, 0)(0,0,0)_4$ nie udało się uchwycić całkowitej zmienności danych, ale wszystkie obserwacje ze zbioru testowego mieszczą się w przedziałach ufności.
+\begin{figure}[H]
+```{r echo=FALSE,fig.width=5.5,fig.height=4}
+prognoza.bic <- forecast::forecast(model.bic, h=h, level = 95)
+p3 <- autoplot(gnp.train) + autolayer(prognoza.bic) + autolayer(gnp.test)
+p3
+```
+\caption{Prognoza modelu ARIMA$(1,2,1)(0,0,0)_4$ vs faktyczne dane}
+\label{plot16}
+\end{figure}
+Na rysunku \ref{plot16} zauważymy, że model ARIMA$(1,2,1)(0,0,0)_4$ nie poradził sobie z prognozą danych. Dane nie mieszczą się w większości w przedziałach ufności i znacząco odbiegają od linii obrazującej oryginalne dane.
+\par Możemy dokładniej porównać błędy popełnione przez wybrane modele za pomocą RMSE (Root Mean Square Error), MAE (Mean Absolute Error) oraz MASE (Mean Absolute Scaled Error). Wartości te otrzymamy dzięki funkcji \verb+accuracy+ z pakietu \verb+forecast+. W tabeli \ref{tab2} zostały przedstawione poszczególne błędy dla każdego modelu.
+```{r echo=FALSE,results='asis',message=FALSE}
+RMSE <- c()
+MAE <- c()
+MASE <- c()
+b <- accuracy(prognoza.ma2.bc, gnp.test)
+RMSE <- c(RMSE, b['Test set','RMSE'])
+MAE <- c(MAE, b['Test set','MAE'])
+MASE <- c(MASE, b['Test set', 'MASE'])
+b <- accuracy(prognoza.ar1.bc, gnp.test)
+RMSE <- c(RMSE, b['Test set','RMSE'])
+MAE <- c(MAE, b['Test set','MAE'])
+MASE <- c(MASE, b['Test set', 'MASE'])
+b <- accuracy(prognoza.bic, gnp.test)
+RMSE <- c(RMSE, b['Test set','RMSE'])
+MAE <- c(MAE, b['Test set','MAE'])
+MASE <- c(MASE, b['Test set', 'MASE'])
+
+modele <- c('ARIMA(0,1,2) z transf. B-C', 'ARIMA(1,1,0) z transf. B-C', 'ARIMA$(1,2,1)(0,0,0)_4$ bez transf. B-C')
+df2 <- data.frame(Modele = modele,
+                  RMSE=RMSE,
+                  MAE=MAE,
+                  MASE=MASE)
+print(xtable(df2, caption = 'Tabela błędów predykcji dla uzyskanych modeli', label = 'tab2', row.names = F), type='latex', table.placement = 'H',sanitize.text.function = identity, include.rownames = FALSE,comment = F)
+```
+Widzimy, że największy błąd predykcji ma w każdym przypadku model ARIMA$(1,2,1)(0,0,0)_4$. Najmniejszy błąd dla każdej z metod ma natomiast model ARIMA$(1, 1, 0)(0,0,0)_4$. Jest to także model z najmniejszą ilością współczynników oraz najniższymi kryteriami informacyjnymi z tych trzech. W związku z tym możemy sformułować następujący wniosek.
+\begin{wn}{Najlepszym modelem ARIMA do prognozy szeregu \gnp jest model ARIMA$(1, 1, 0)(0,0,0)_4$ z wcześniejszym zastosowaniem transformacji Boxa-Coxa z parametrem $\lambda=0.25$.}\end{wn}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Porównanie dokładności prognoz dla danych `euretail`
+
+W tej sekcji porównamy dokładności prognoz dla danych `euretail`, które przedstawiają kwartalne wartości indeksu handlu detalicznego dla strefy euro w latach 1996-2011. Prognozy skonstruujemy na bazie modeli: ARIMA, dekompozycji oraz algorytmów wygładzania wykładniczego.
+
+
+```{r dane i podzial}
+library(forecast)
+library(fpp)
+
+data(euretail)
+
+euretail.learn <- window(euretail, end=c(2009,4))
+euretail.test <- window(euretail, start=c(2010,1))
+
+h <- length(euretail.test)
+```
+
+
+
+```{r wykres dane, fig.cap="\\label{fig:dane_learn} Wykres dla danych euretail - część treningowa"}
+autoplot(euretail.learn, main="euretail - część treningowa")
+```
+
+Na Rysunku \ref{fig:dane_learn} przedstawiono dane `euretail` po podziale na część treningową i testową. Część treningowa obejmuje dane do końca 2009 roku, natomiast część testowa to dane od początku 2010 roku.
+
+## Dopasowanie odpowiednich modeli do danych 
+
+W tej części zajmiemy się identyfikacją odpowiednich modeli do danych `euretail`. W tym celu rozważymy modele AR(p), MA(q), ARIMA, modele dekompozycji oraz modele oparte na algorytmach wygładzania wykładniczego.
+
+\newpage 
+### Identyfikacja modeli AR(p), MA(q), ARIMA
+
+1. Transformacja Boxa-Coxa
+
+```{r boxcox, fig.cap="\\label{fig:boxcox} Dane euretail po transformacji Boxa-Coxa z automatycznie dobranym parametrem lambda = 2"}
+euretail.learn.bc <- BoxCox(euretail.learn, BoxCox.lambda(euretail.learn, "loglik")) # lambda=2
+autoplot(euretail.learn.bc, main="Box-Cox (lambda=2)")
+```
+
+Jak widać (Rysunek \ref{fig:boxcox}) dane po zastosowaniu transformacji Boxa-Coxa z parametrem $\lambda = 2$ zasadniczo nie zmieniły się, także w dalszej części analizy nie będziemy ich rozważać (inne wartości parametru $\lambda$ również nie przynoszą poprawy). 
+
+2. Różnicowanie
+
+```{r roznicowanie 1, fig.cap="\\label{fig:roznicowanie411} Dane euretail po jednokrotnym zróżnicowaniu z lag = 4 i dwukrotnym zróżnicowaniu z lag = 1"} 
+# ndiffs(euretail.learn) = 2
+# nsdiffs(euretail.learn) = 1
+
+euretail.learn.4 <- diff(euretail.learn, lag=4)
+euretail.learn.4.1 <- diff(euretail.learn.4, lag=1)
+euretail.learn.4.1.1 <- diff(euretail.learn.4.1, lag=1)
+ggtsdisplay(euretail.learn.4.1.1, main="Zróżnicowany euretail")
+```
+
+Jak można zauważyć (Rysunek \ref{fig:roznicowanie411}) operacje: jednokrotnego różnicowania z `lag = 4` (w celu usunięcia sezonowości) oraz dwukrotnego różnicowania z `lag = 1` (w celu usunięcia trendu) zdaje się, że pozwoliły na uzyskanie szeregu stacjonarnego dla danych `euretail`. Wykresy ACF i PACF (Rysunek \ref{fig:roznicowanie411}) sugerują, że potencjalnymi rzędami modelu dla AR(p) może być `p=4`, natomiast dla MA(q): `q=4` i `q=9`, także w naszej analizie rozważymy 4 modele:
+
+* ARIMA(4,2,0)(0,1,0)
+* ARIMA(0,2,4)(0,1,0)
+* ARIMA(0,2,9)(0,1,0)
+* ARIMA(0,1,3)(0,1,1) (model automatyczny)
+
+```{r arima}
+model.ar.4 <- Arima(euretail.learn, order=c(4,2,0), seasonal=c(0,1,0))
+
+model.ma.4 <- Arima(euretail.learn, order=c(0,2,4), seasonal=c(0,1,0))
+model.ma.9 <- Arima(euretail.learn, order=c(0,2,9), seasonal=c(0,1,0))
+
+model.auto <- auto.arima(euretail.learn, stepwise=FALSE, approximation=FALSE)
+```
+
+
+
+### Identyfikacja modeli dekompozycji
+
+```{r dekompozycja, fig.cap="\\label{fig:dekompozycja} Wykres euretail z dopasowanym trendem kwadratowym", fig.width=3.5, fig.height=2.5}
+model.tslm <- tslm(euretail.learn ~ season + trend + I(trend^2))
+autoplot(cbind(euretail.learn, model.tslm$fitted), main="Trend kwadratowy do euretail", lwd=1, ylab="wartość RTI")
+```
+
+Na rysunku \ref{fig:dekompozycja} przedstawiono dopasowanie modelu dekompozycji z trendem kwadratowym do danych `euretail`, który wydaje się być dopasowany nie najgorzej do danych, także w dalszej części analizy będziemy go rozważać.
+
+### Identyfikacja modeli algorytmów wygładzania wykładniczego
+
+Rozważymy 4 modele wygładzania wykładniczego: 
+
+* model prosty (SES)
+* model Holta z tłumieniem
+* model addytywny Holta-Wintersa
+* model automatyczny ETS
+
+
+
+```{r ses}
+model.ses <- ses(euretail.learn, h=h, initial="optimal")
+```
+
+```{r holt}
+model.holt.damped <- holt(euretail.learn, h=h, damped=TRUE)
+```
+
+```{r hw}
+model.hw.add <- hw(euretail.learn, seasonal="additive")
+```
+
+```{r ets}
+model.ets <- ets(euretail.learn)
+```
+
+
+### Diagnostyka modeli
+
+Diagnostykę modeli przeprowadzamy w oparciu o test Ljungi-Boxa (weryfikacja białoszumowści reszt), test Shapiro Wilka (weryfikacja normalności reszt) oraz istotność współczynników modelu. Formalnie odpowiednie hipotezy to:
+
+  * $H_0$: Reszty modelu są białym szumem
+  * $H_1$: Reszty modelu nie są białym szumem
+
+oraz
+
+  * $H_0$: Reszty modelu pochodzą z rozkładu normalnego
+  * $H_1$: Reszty modelu nie pochodzą z rozkładu normalnego
+
+
+```{r tabela arima, include=FALSE}
+spr_wsp_arima <- function(model) {
+  test_wyn <- coeftest(model)
+  p_values <- test_wyn[, "Pr(>|z|)"]
+  if (all(p_values <= 0.05)) {
+    return("wszystkie istotne")
+  } else if (any(p_values <= 0.05)) {
+    return("częściowo istotne")
+  } else {
+    return("brak istotnych")
+  }
+}
+
+arima_wyniki <- data.frame(
+  model = c("ARIMA(4,2,0)(0,1,0)", "ARIMA(0,2,4)(0,1,0)", "ARIMA(0,2,9)(0,1,0)", "ARIMA(0,1,3)(0,1,1)"),
+  p_value_LB = c(
+    checkresiduals(model.ar.4, plot = F)$p.value,
+    checkresiduals(model.ma.4, plot = F)$p.value,
+    checkresiduals(model.ma.9, plot = F)$p.value,
+    checkresiduals(model.auto, plot = F)$p.value
+  ),
+  p_value_SW = c(
+    shapiro.test(residuals(model.ar.4))$p.value,
+    shapiro.test(residuals(model.ma.4))$p.value,
+    shapiro.test(residuals(model.ma.9))$p.value,
+    shapiro.test(residuals(model.auto))$p.value
+  ),
+  wspolczynniki = c(
+    spr_wsp_arima(model.ar.4),
+    spr_wsp_arima(model.ma.4),
+    spr_wsp_arima(model.ma.9),
+    spr_wsp_arima(model.auto)
+  )
+)
+
+
+arima_wyniki$Decyzja_LB <- ifelse(arima_wyniki$p_value_LB > 0.05, "+", "-")
+arima_wyniki$Decyzja_SW <- ifelse(arima_wyniki$p_value_SW > 0.05, "+", "-")
+
+tabela_arima <- arima_wyniki[, c("model", "p_value_LB", "Decyzja_LB", "p_value_SW", "Decyzja_SW", "wspolczynniki")]
+colnames(tabela_arima) <- c("Model", "p-value (L-B)", "decyzja (L-B)", "p-value (S-W)", "decyzja (S-W)", "istotność współczynników")
+
+```
+
+```{r tabela arima xtable, results='asis'}
+xtable_arima <- xtable(tabela_arima, caption = "Wyniki testów diagnostycznych dla modeli ARIMA", 
+                       label = "tab:diag_arima", 
+                       digits = c(0, 0, 4, 0, 4, 0, 0))
+
+print(xtable_arima, type = "latex", comment = FALSE, include.rownames = FALSE, caption.placement = "top", booktabs = TRUE)
+```
+
+
+
+```{r tabela tslm, include=FALSE}
+spr_wsp_tslm <- function(model) {
+  p_values <- summary(model)$coefficients[, "Pr(>|t|)"]
+  if (all(p_values <= 0.05)) {
+    return("wszystkie istotne")
+  } else {
+    return("częściowo istotne")
+  }
+}
+
+
+tslm_wyniki <- data.frame(
+  model = "trend kwadr. + sezon",
+  p_value_LB = checkresiduals(model.tslm, plot = F)$p.value,
+  p_value_SW = shapiro.test(residuals(model.tslm))$p.value,
+  wspolczynniki = spr_wsp_tslm(model.tslm)
+)
+
+tslm_wyniki$Decyzja_LB <- ifelse(tslm_wyniki$p_value_LB > 0.05, "+", "-")
+tslm_wyniki$Decyzja_SW <- ifelse(tslm_wyniki$p_value_SW > 0.05, "+", "-")
+
+tabela_tslm <- tslm_wyniki[, c("model", "p_value_LB", "Decyzja_LB", "p_value_SW", "Decyzja_SW", "wspolczynniki")]
+colnames(tabela_tslm) <- c("Model", "p-value (L-B)", "decyzja (L-B)", "p-value (S-W)", "decyzja (S-W)", "istotność współczynników")
+
+```
+
+```{r tabela tslm xtable, results='asis'}
+xtable_tslm <- xtable(tabela_tslm, caption = "Wyniki testów diagnostycznych dla modelu dekompozycji tslm",
+                      label = "tab:diag_tslm",
+                      digits = c(0, 0, 4, 0, 4, 0, 0))
+print(xtable_tslm, type = "latex", comment = FALSE, include.rownames = FALSE, caption.placement = "top", booktabs = TRUE)
+```
+
+
+
+
+```{r tabela ets, include=FALSE}
+ets_modele <- list(model.ses, model.holt.damped, model.hw.add, model.ets)
+ets_nazwy <- c("SES", "Holt (tłumiony)", "Holt-Winters (addytywny)", "ETS (automatyczny)")
+
+ets_wyniki_lista <- lapply(ets_modele, function(m) {
+  data.frame(
+    p_value_LB = checkresiduals(m, plot = F)$p.value,
+    p_value_SW = shapiro.test(residuals(m))$p.value
+  )
+})
+
+ets_wyniki <- do.call(rbind, ets_wyniki_lista)
+ets_wyniki$model <- ets_nazwy
+
+ets_wyniki$Decyzja_LB <- ifelse(ets_wyniki$p_value_LB > 0.05, "+", "-")
+ets_wyniki$Decyzja_SW <- ifelse(ets_wyniki$p_value_SW > 0.05, "+", "-")
+
+tabela_ets <- ets_wyniki[, c("model", "p_value_LB", "Decyzja_LB", "p_value_SW", "Decyzja_SW")]
+colnames(tabela_ets) <- c("Model", "p-value (L-B)", "decyzja (L-B)", "p-value (S-W)", "decyzja (S-W)")
+```
+
+```{r tabela ets xtable, results='asis'}
+xtable_ets <- xtable(tabela_ets,caption = "Wyniki testów diagnostycznych dla modeli wygładzania wykładniczego",
+                     label = "tab:diag_ets",
+                     digits = c(0, 0, 4, 0, 4, 0))
+print(xtable_ets, type = "latex", comment = FALSE, include.rownames = FALSE, caption.placement = "top", booktabs = TRUE)
+
+```
+
+\clearpage
+
+Wyniki przeprowadzonych testów diagnostycznych, przedstawione w tabelach \ref{tab:diag_arima}, \ref{tab:diag_tslm} oraz \ref{tab:diag_ets}, pozwoliły na wyłonienie trzech faworytów: 
+
+* **ARIMA(0,1,3)(0,1,1)**
+* **addytywny model Holta-Wintersa**
+* **automatyczny model ETS**
+
+
+
+## Wyznaczenie, przedstawienie na wykresach i porównanie dokładności prognoz dla zbioru testowego
+
+W tej części zajmiemy się wyznaczeniem prognoz dla zbioru testowego na podstawie dopasowanych modeli oraz sezonowej metodzie naiwnej (metoda referencyjna).
+
+
+```{r prognoza ar4, fig.cap="\\label{fig:prognoza_ar4} Prognoza dla modelu AR(4) na zbiorze testowym euretail", fig.width=4, fig.height=2.5}
+forecast.model.ar.4 <- forecast::forecast(model.ar.4, h=h, level=95)
+autoplot(forecast.model.ar.4) + autolayer(euretail.test)
+```
+
+```{r prognoza ma4, fig.cap="\\label{fig:prognoza_ma4} Prognoza dla modelu MA(4) na zbiorze testowym euretail", fig.width=4, fig.height=2.5}
+forecast.model.ma.4 <- forecast::forecast(model.ma.4, h=h, level=95)
+autoplot(forecast.model.ma.4) + autolayer(euretail.test)
+```
+
+```{r prognoza ma9, fig.cap="\\label{fig:prognoza_ma9} Prognoza dla modelu MA(9) na zbiorze testowym euretail", fig.width=4, fig.height=2.5}
+forecast.model.ma.9 <- forecast::forecast(model.ma.9, h=h, level=95)
+autoplot(forecast.model.ma.9) + autolayer(euretail.test)
+```
+
+```{r prognoza auto, fig.cap="\\label{fig:prognoza_auto} Prognoza dla modelu ARIMA(0,1,3)(0,1,1) na zbiorze testowym euretail", fig.width=4, fig.height=2.5}
+forecast.model.auto <- forecast::forecast(model.auto, h=h, level=95)
+autoplot(forecast.model.auto) + autolayer(euretail.test)
+```
+
+```{r prognoza tslm, fig.cap="\\label{fig:prognoza_tslm} Prognoza dla modelu dekompozycji TSLM na zbiorze testowym euretail", fig.width=4, fig.height=2.5}
+forecast.model.tslm <- forecast::forecast(model.tslm, h=h, level=95)
+autoplot(forecast.model.tslm) + autolayer(euretail.test)
+```
+
+```{r prognoza ses, fig.cap="\\label{fig:prognoza_ses} Prognoza dla modelu SES na zbiorze testowym euretail", fig.width=4, fig.height=2.5}
+forecast.model.ses <- forecast::forecast(model.ses, h=h)
+autoplot(forecast.model.ses) + autolayer(euretail.test)
+```
+
+```{r prognoza holt, fig.cap="\\label{fig:prognoza_holt} Prognoza dla modelu Holta na zbiorze testowym euretail", fig.width=4, fig.height=2.5}
+forecast.model.holt <- forecast::forecast(model.holt.damped, h=h)
+autoplot(forecast.model.holt) + autolayer(euretail.test)
+```
+
+```{r prognoza hw, fig.cap="\\label{fig:prognoza_hw} Prognoza dla modelu addytywnego Holta-Wintersa na zbiorze testowym euretail", fig.width=4, fig.height=2.5}
+forecast.model.hw.add <- forecast::forecast(model.hw.add, h=h)
+autoplot(forecast.model.hw.add) + autolayer(euretail.test)
+```
+
+```{r prognoza ets, fig.cap="\\label{fig:prognoza_ets} Prognoza dla modelu automatycznego ETS na zbiorze testowym euretail", fig.width=4, fig.height=2.5}
+forecast.model.ets <- forecast::forecast(model.ets, h=h)
+autoplot(forecast.model.ets) + autolayer(euretail.test)
+```
+
+```{r sezonowa metoda naiwna, fig.cap="\\label{fig:prognoza_naive} Prognoza dla sezonowej metody naiwnej na zbiorze testowym euretail", fig.width=4, fig.height=2.5}
+forecast.model.naive <- snaive(euretail.learn, h=h, level=95)
+autoplot(forecast.model.naive) + autolayer(euretail.test)
+```
+
+
+```{r tabela dokladnosci, results='asis'}
+prognozy_modele <- list(
+  "ARIMA(4,2,0)(0,1,0)" = forecast.model.ar.4,
+  "ARIMA(0,2,4)(0,1,0)" = forecast.model.ma.4,
+  "ARIMA(0,2,9)(0,1,0)" = forecast.model.ma.9,
+  "ARIMA(0,1,3)(0,1,1)" = forecast.model.auto,
+  "tslm" = forecast.model.tslm,
+  "SES" = forecast.model.ses,
+  "Holt (tłumiony)" = forecast.model.holt,
+  "Holt-Winters (addytywny)" = forecast.model.hw.add,
+  "ETS (automatyczny)" = forecast.model.ets,
+  "Sezonowa metoda naiwna" = forecast.model.naive
+)
+
+dokladnosc_wyniki_lista <- lapply(names(prognozy_modele), function(model_name) {
+
+  prognoza <- prognozy_modele[[model_name]]
+  dokladnosc <- accuracy(prognoza, euretail.test)
+  
+  data.frame(
+    Model = model_name,
+    RMSE.learn = dokladnosc[1, "RMSE"],
+    MAE.learn = dokladnosc[1, "MAE"],
+    RMSE.test = dokladnosc[2, "RMSE"],
+    MAE.test = dokladnosc[2, "MAE"]
+  )
+})
+
+dokladnosc_tabela <- do.call(rbind, dokladnosc_wyniki_lista)
+colnames(dokladnosc_tabela) <- c("Model", "RMSE (trening)", "MAE (trening)", "RMSE (test)", "MAE (test)")
+
+dokladnosc_xtable <- xtable(dokladnosc_tabela, caption = "Porównanie dokładności prognoz na zbiorze treningowym i testowym", 
+                            label = "tab:dokladnosc", digits = c(0, 0, 4, 4, 4, 4))
+print(dokladnosc_xtable, type = "latex", comment = FALSE, include.rownames = FALSE, caption.placement = "top", booktabs = TRUE)
+```
+
+## Wnioski
+
+Modele, które nie uwzględniają sezonowości, takie jak SES (Rysunek \ref{fig:prognoza_ses}) i model Holta (Rysunek \ref{fig:prognoza_holt}), generują prognozy całkowicie odbiegające od rzeczywistych wartości. Podobnie, ręcznie dobrane modele ARIMA (Rysunki: \ref{fig:prognoza_ar4}, \ref{fig:prognoza_ma4}, \ref{fig:prognoza_ma9}) oraz model dekompozycji tslm (Rysunek \ref{fig:prognoza_tslm}) próbują naśladować dynamikę szeregu, jednak ich prognozy znacząco odbiegają od danych testowych, co potwierdzają wysokie wartości błędów w Tabeli \ref{tab:dokladnosc}.
+
+Zupełnie inaczej (w większości) prezentują się modele, które pomyślnie przeszły wcześniejszą diagnostykę. Prognozy z modeli **ARIMA(0,1,3)(0,1,1)** (Rysunek \ref{fig:prognoza_auto}) oraz **automatycznego ETS** (Rysunek \ref{fig:prognoza_ets}) bardzo dobrze pokrywają się z rzeczywistymi danymi ze zbioru testowego, trafnie oddając zarówno trend, jak i sezonowość. Ciekawy jest przypadek modelu addytywnego Holta-Wintersa, który mimo że przeszedł testy diagnostyczne, jego prognozy okazały się zaskakująco słabe, co pokazuje że pomyślna diagnostyka jest warunkiem koniecznym, ale nie wystarczającym.
+
+Ostateczną weryfikację jakości modeli dostarcza porównanie miar błędów prognoz, zebrane w Tabeli \ref{tab:dokladnosc}. Warto przy tym zauważyć, że prawie wszyskie modele osiągnęły dość niskie poziomy błędów na zbiorze treningowym, jednak to co wyróżnia najlepsze modele, to fakt, że osiągają one niższe poziomy błędów na zbiorze testowym, natomiast słabe modele przeciwnie. Przykładowo, model ARIMA(0,2,9)(0,1,0) choć miał najniższy błąd dopasowania do danych treningowych, to osiągnął znacznie gorsze wyniki na zbiorze testowym, co wskazuje na jego przeuczenie i ogólnie słabą zdolność do generalizacji.
+
+Dane dość jednoznacznie wskazują, że model **automatyczny ETS** jest modelem optymalnym. Uzyskał on najniższe wartości `RMSE = 0.2346`, jak i `MAE = 0.1995` na zbiorze testowym. Bardzo dobre wyniki uzyskał również model ARIMA(0,1,3)(0,1,1), który jest najlepszym kandydatem z rodziny modeli ARIMA, jednak jego błędy są o ponad 50% wyższe niż w przypadku modelu ETS.
